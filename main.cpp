@@ -14,12 +14,93 @@ path operator""_p(const char* data, std::size_t sz) {
     return path(data, data + sz);
 }
 
+static const regex include_local(R"(\s*#\s*include\s*\"([^\"]*)\")");
+static const regex include_global(R"(\s*#\s*include\s*<([^>]*)>)");
+
+
 // напишите эту функцию
-bool Preprocess(const path& in_file, const path& out_file, const vector<path>& include_directories);
+bool Preprocess(const path& current_file, const path& out_file, const vector<path>& include_directories, ostream* output = nullptr, int depth = 0) {
+    
+    if (depth == 0) {
+        // Открываем основной входной файл
+        ifstream input(current_file);
+        if (!input.is_open()) {
+            return false;
+        }
+
+        // Открываем выходной файл
+        ofstream output_stream(out_file);
+        if (!output_stream.is_open()) {
+            return false;
+        }
+
+        // Запускаем обработку
+        return Preprocess(current_file, out_file, include_directories, &output_stream, depth + 1);
+    }
+
+    // Обработка вложенных файлов
+    ifstream input(current_file);
+    if (!input.is_open()) {
+        cout << "unknown include file " << current_file << " at file " << current_file
+            << " at line 0\n";
+        return false;
+    }
+
+    ostream& out = *output;
+    string line;
+    int line_number = 0;
+
+    while (getline(input, line)) {
+        line_number++;
+        smatch match;
+
+        // Если строка содержит директиву #include
+        if (regex_match(line, match, include_local) || regex_match(line, match, include_global)) {
+            path include_file = string(match[1]);
+            path include_path;
+
+            // Проверяем локальные файлы
+            if (regex_match(line, match, include_local)) {
+                include_path = current_file.parent_path() / include_file;
+                if (!ifstream(include_path).is_open()) {
+                    include_path.clear();
+                }
+            }
+
+            // Если локальный файл не найден или это глобальный include
+            if (include_path.empty()) {
+                for (const auto& dir : include_directories) {
+                    path candidate = dir / include_file;
+                    if (ifstream(candidate).is_open()) {
+                        include_path = candidate;
+                        break;
+                    }
+                }
+            }
+
+            // Если файл так и не найден
+            if (include_path.empty()) {
+                std::cout << "unknown include file " << include_file.string() << " at file " 
+                    << current_file.string() << " at line " << line_number << std::endl;
+                return false;
+            }
+
+            // Рекурсивно обрабатываем найденный файл
+            if (!Preprocess(include_path, out_file, include_directories, output, depth + 1)) {
+                return false;
+            }
+        }
+        else {
+            // Записываем строку в выходной поток
+            out << line << '\n';
+        }
+    }
+
+    return true;
+}
 
 string GetFileContents(string file) {
     ifstream stream(file);
-
     // конструируем string по двум итераторам
     return {(istreambuf_iterator<char>(stream)), istreambuf_iterator<char>()};
 }
